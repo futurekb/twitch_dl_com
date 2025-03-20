@@ -1,0 +1,22 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "twitch_dl_com"
+version = "0.1.0"
+description = "Twitch配信チェッカーとコメントダウンローダー"
+requires-python = ">=3.8"
+dependencies = [
+    "PyQt6",
+    "pyperclip",
+    "requests"
+]
+
+[tool.hatch.build]
+only-packages = true
+packages = ["src/twitch_dl_com"]
+
+[tool.hatch.build.targets.wheel]
+only-packages = true
+packages = ["src/twitch_dl_com"]

@@ -1,0 +1,44 @@
+# 設定
+config/settings.json
+config/token_cache.json
+
+# 環境
+.venv/
+env/
+.env/
+.venv/
+ENV/
+env.bak/
+venv.bak/
+.env
+
+# Python関連
+__pycache__/
+*.pyc
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# その他
+.DS_Store
+.idea/
+.vscode/
+
+#DB
+twitch_users.db

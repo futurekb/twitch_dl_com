@@ -1,0 +1,7 @@
+{
+	"twitch": {
+		"client_id": "YOUR_CLIENT_ID",
+		"client_secret": "YOUR_CLIENT_SECRET",
+		"_comment": "Twitchの開発者ポータル（https://dev.twitch.tv/console）でアプリケーションを作成し、Client IDとClient Secretを取得してください。"
+	}
+}
