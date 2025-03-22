@@ -74,6 +74,39 @@ def open_folder(path):
         return False
     return True
 
+# def copy_to_windows(src_path):
+#     """Linuxの仮想環境からWindowsのローカル環境にファイルをコピーする関数"""
+#     try:
+#         # Windowsのダウンロードフォルダのパス
+#         windows_path = "/mnt/c/Users/futur/Downloads/TwitchComment"
+        
+#         # Windowsのフォルダを作成
+#         os.makedirs(windows_path, exist_ok=True)
+        
+#         # ファイルをコピー
+#         for file in glob.glob(os.path.join(src_path, "*.csv")):
+#             filename = os.path.basename(file)
+#             # コロン(:)をアンダースコア(_)に置換
+#             safe_filename = filename.replace(":", "_")
+#             dst_file = os.path.join(windows_path, safe_filename)
+            
+#             try:
+#                 # ファイルの存在確認
+#                 if os.path.exists(file):
+#                     subprocess.run(['cp', '-f', file, dst_file], check=True)
+#                     print(f"ファイルをコピーしました: {dst_file}")
+#                 else:
+#                     print(f"元ファイルが見つかりません: {file}")
+#                     continue
+#             except subprocess.CalledProcessError as e:
+#                 print(f"ファイルコピー中にエラーが発生: {e}")
+#                 continue
+        
+#         return windows_path
+#     except Exception as e:
+#         print(f"Windowsへのコピーに失敗しました: {e}")
+#         return None
+
 def copy_to_windows(src_path):
     """Linuxの仮想環境からWindowsのローカル環境にファイルをコピーする関数"""
     try:
@@ -98,7 +131,9 @@ def copy_to_windows(src_path):
 def sanitize_filename(filename):
     """ファイル名から不正な文字を除去"""
     # Windowsで使用できない文字を置換
-    filename = re.sub(r'[<>:"/\\|?*]', '_', filename)
+    filename = re.sub(r'[<>"/\\|?*]', '_', filename)
+    # コロン(:)を別途処理
+    filename = filename.replace(':', '_')
     # 文字数制限（255文字以内）
     if len(filename) > 255:
         base, ext = os.path.splitext(filename)
@@ -115,6 +150,7 @@ def rename_chat_file(download_path, new_filename):
             return None
 
         newest_file = max(csv_files, key=os.path.getctime)
+        # TODO: ファイル名変換がおかしい。sanitize_filename
         new_filepath = os.path.join(download_path, sanitize_filename(new_filename))
         
         # ファイルが既に存在する場合は、連番を付与

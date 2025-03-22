@@ -17,6 +17,22 @@ class DatabaseManager:
             )
         ''')
         self.conn.commit()
+        
+        # コメントテーブルの作成
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS comments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                video_id TEXT NOT NULL,
+                streamer_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                user_color TEXT,
+                comment_time TIMESTAMP NOT NULL,
+                message TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (streamer_id) REFERENCES users (id)
+            )
+        ''')
+        self.conn.commit()
 
     def add_user(self, user_data: Dict) -> bool:
         try:
@@ -53,3 +69,22 @@ class DatabaseManager:
         except Exception as e:
             print(f"Error removing user: {e}")
             return False
+
+    def save_comments(self, video_id: str, streamer_id: str, comments: list):
+        cursor = self.conn.cursor()
+        cursor.executemany(
+            '''
+            INSERT INTO comments (video_id, streamer_id, user_id, user_color, comment_time, message)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ''',
+            comments
+        )
+        self.conn.commit()
+
+    def get_video_comments(self, video_id: str):
+        cursor = self.conn.cursor()
+        cursor.execute(
+            'SELECT * FROM comments WHERE video_id = ? ORDER BY comment_time',
+            (video_id,)
+        )
+        return cursor.fetchall()

@@ -1,7 +1,7 @@
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                            QPushButton, QScrollArea, QLabel, QFrame, QMessageBox,
                            QComboBox)
-from PyQt6.QtCore import Qt, QTimer, QMimeData, QPoint
+from PyQt6.QtCore import Qt, QTimer, QMimeData, QPoint, QThread, pyqtSignal
 from PyQt6.QtGui import QPixmap, QDrag
 import json
 import os
@@ -12,27 +12,52 @@ from .video_list_dialog import VideoListDialog
 from .user_register_dialog import UserRegisterDialog
 import urllib.request
 
+class ImageLoader(QThread):
+    loaded = pyqtSignal(QPixmap)
+    
+    def __init__(self, url):
+        super().__init__()
+        self.url = url
+    
+    def run(self):
+        try:
+            data = urllib.request.urlopen(self.url).read()
+            pixmap = QPixmap()
+            pixmap.loadFromData(data)
+            self.loaded.emit(pixmap)
+        except Exception as e:
+            print(f"Error loading image: {e}")
+
 class UserPanel(QFrame):
     def __init__(self, user_data, parent=None):
         super().__init__(parent)
         self.user_data = user_data
-        self.setup_ui()
-        self.setAcceptDrops(True)  # ドロップを許可
+        self.icon_label = QLabel()  # icon_labelを先に初期化
+        self.setAcceptDrops(True)
+        
+        # 画像を非同期で読み込む
+        self.image_loader = ImageLoader(self.user_data['profile_image_url'])
+        self.image_loader.loaded.connect(self.update_icon)
+        self.image_loader.start()
+        
+        self.setProperty("draggable", False)  # ドラッグ可能状態を追跡
+        self.setup_ui()  # UIのセットアップは最後に行う
+
+    def update_icon(self, pixmap):
+        self.icon_label.setPixmap(pixmap.scaled(50, 50, Qt.AspectRatioMode.KeepAspectRatio))
 
     def setup_ui(self):
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(10, 10, 10, 10)  # パネル全体の余白を設定
-        layout.setSpacing(15)  # 要素間の間隔を設定
+        layout.setContentsMargins(5, 5, 5, 5)  # 余白を縮小
+        layout.setSpacing(10)  # 要素間の間隔を縮小
         
         # ユーザアイコンとLIVEラベルを含むレイアウト
         icon_layout = QVBoxLayout()
+        icon_layout.setSpacing(2)  # アイコンとLIVEラベルの間隔を縮小
         
         # ユーザアイコン
-        icon_label = QLabel()
-        pixmap = QPixmap()
-        pixmap.loadFromData(urllib.request.urlopen(self.user_data['profile_image_url']).read())
-        icon_label.setPixmap(pixmap.scaled(50, 50, Qt.AspectRatioMode.KeepAspectRatio))
-        icon_layout.addWidget(icon_label)
+        self.icon_label.setFixedSize(40, 40)  # アイコンサイズを縮小
+        icon_layout.addWidget(self.icon_label)
         
         # LIVE表示
         if self.user_data['is_live']:
@@ -41,9 +66,10 @@ class UserPanel(QFrame):
                 QLabel {
                     background-color: #ff0000;
                     color: white;
-                    padding: 2px 5px;
-                    border-radius: 3px;
+                    padding: 1px 3px;
+                    border-radius: 2px;
                     font-weight: bold;
+                    font-size: 10px;
                 }
             """)
             live_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -53,7 +79,7 @@ class UserPanel(QFrame):
         
         # ユーザ情報
         info_layout = QVBoxLayout()
-        info_layout.setSpacing(5)  # ラベル間の間隔を設定
+        info_layout.setSpacing(2)  # ラベル間の間隔を縮小
         
         # 配信者名を最初に表示
         name_label = QLabel(f"{self.user_data['display_name']} ({self.user_data['login']})")
@@ -62,33 +88,56 @@ class UserPanel(QFrame):
         
         # 各ラベルのスタイル設定
         for label in [name_label, title_label, category_label]:
-            label.setWordWrap(True)  # 長いテキストの折り返しを有効化
-            label.setMinimumHeight(20)  # 最小の高さを設定
+            label.setWordWrap(True)
+            label.setMinimumHeight(15)  # 最小の高さを縮小
+        
+        # フォントサイズを調整
+        name_label.setStyleSheet("font-weight: bold; font-size: 11px;")
+        title_label.setStyleSheet("font-size: 10px;")
+        category_label.setStyleSheet("font-size: 10px; color: #666;")
         
         info_layout.addWidget(name_label)
         info_layout.addWidget(title_label)
         info_layout.addWidget(category_label)
-        layout.addLayout(info_layout, stretch=1)  # 情報レイアウトを伸縮可能に設定
+        layout.addLayout(info_layout, stretch=1)
         
         # ボタンレイアウト
         button_layout = QVBoxLayout()
+        button_layout.setSpacing(2)  # ボタン間の間隔を縮小
         
         # 動画一覧ボタン
         videos_button = QPushButton("動画一覧")
-        videos_button.setFixedWidth(100)
+        videos_button.setFixedWidth(70)  # ボタン幅を縮小
+        videos_button.setFixedHeight(20)  # ボタン高さを縮小
+        videos_button.setStyleSheet("font-size: 10px;")
         videos_button.clicked.connect(lambda: self.show_videos())
         button_layout.addWidget(videos_button)
         
         # 削除ボタン
         delete_button = QPushButton("ユーザ削除")
-        delete_button.setFixedWidth(100)
-        delete_button.setStyleSheet("background-color: #ffcccc;")  # 赤っぽい背景色
+        delete_button.setFixedWidth(70)  # ボタン幅を縮小
+        delete_button.setFixedHeight(20)  # ボタン高さを縮小
+        delete_button.setStyleSheet("background-color: #ffcccc; font-size: 10px;")
         delete_button.clicked.connect(self.confirm_delete)
         button_layout.addWidget(delete_button)
         
         layout.addLayout(button_layout)
         
         self.setFrameStyle(QFrame.Shape.StyledPanel | QFrame.Shadow.Raised)
+        # パネル全体のスタイル設定
+        self.setStyleSheet("""
+            QFrame[draggable="true"] {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                                          stop:0 #f0f0f0, stop:1 #e3e3e3);
+                border: 1px solid #cccccc;
+                border-radius: 3px;
+            }
+            QFrame[draggable="true"]:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                                          stop:0 #e7e7e7, stop:1 #d7d7d7);
+                border: 2px solid #aaaaaa;
+            }
+        """)
 
     def confirm_delete(self):
         reply = QMessageBox.question(
@@ -128,12 +177,37 @@ class UserPanel(QFrame):
             drag = QDrag(self)
             mime = QMimeData()
             mime.setText(self.user_data['id'])
+            
+            # ドラッグ時のプレビュー画像を生成
+            pixmap = self.grab()
+            # 浮動小数点数を整数に変換
+            scaled_width = int(self.width() * 0.95)
+            scaled_height = int(self.height() * 0.95)
+            pixmap = pixmap.scaled(scaled_width, scaled_height,
+                                 Qt.AspectRatioMode.KeepAspectRatio,
+                                 Qt.TransformationMode.SmoothTransformation)
+            drag.setPixmap(pixmap)
+            drag.setHotSpot(QPoint(pixmap.width()//2, 10))
+            
             drag.setMimeData(mime)
             drag.exec(Qt.DropAction.MoveAction)
 
     def dragEnterEvent(self, event):
         if self.window().is_ordering_mode and event.mimeData().hasText():
             event.acceptProposedAction()
+            # フレーム全体のスタイルのみを変更
+            self.setStyleSheet("""
+                QFrame {
+                    border: 2px solid #4a90e2;
+                    background: #e8f2fd;
+                    border-radius: 3px;
+                }
+            """)
+
+    def dragLeaveEvent(self, event):
+        if self.window().is_ordering_mode:
+            # 元のスタイルに戻す
+            self.setup_ui()
 
     def dropEvent(self, event):
         if self.window().is_ordering_mode and event.mimeData().hasText():
@@ -213,6 +287,9 @@ class MainWindow(QMainWindow):
         self.load_users()
 
     def load_users(self):
+        # パフォーマンス改善のため、一時的にレイアウトを無効化
+        self.user_list_widget.setUpdatesEnabled(False)
+        
         # 既存のパネルをクリア
         while self.user_list_layout.count():
             item = self.user_list_layout.takeAt(0)
@@ -222,33 +299,38 @@ class MainWindow(QMainWindow):
 
         registered_users = self.db.get_all_users()
         
-        # ユーザー順序リストの更新
-        current_ids = {user['id'] for user in registered_users}
-        self.user_order = [uid for uid in self.user_order if uid in current_ids]
-        new_ids = current_ids - set(self.user_order)
-        self.user_order.extend(new_ids)
-        
+        # バッチ処理でユーザー詳細を取得
+        user_details = {}
+        batch_size = 10
+        for i in range(0, len(registered_users), batch_size):
+            batch = registered_users[i:i + batch_size]
+            user_ids = [user['id'] for user in batch]
+            try:
+                details = self.api.get_users_details(user_ids)
+                user_details.update(details)
+            except Exception as e:
+                print(f"Error loading users batch: {str(e)}")
+
         user_panels = []
-        
         for user in registered_users:
-            # 非表示ユーザーをスキップ
             if user['id'] in self.hidden_users:
                 continue
                 
             try:
-                user_details = self.api.get_user_details(user['id'])
-                panel = UserPanel(self._merge_user_data(user, user_details), self)
+                details = user_details.get(user['id'])
+                panel = UserPanel(self._merge_user_data(user, details), self)
                 user_panels.append(panel)
             except Exception as e:
-                print(f"Error loading user {user['id']}: {str(e)}")
+                print(f"Error creating panel for user {user['id']}: {str(e)}")
                 continue
 
-        # ソート順に応じてパネルを並び替え
+        # ソートとパネル追加
         sorted_panels = self.sort_panels(user_panels)
-        
-        # パネルを追加
         for panel in sorted_panels:
             self.user_list_layout.addWidget(panel)
+        
+        # レイアウトの更新を再開
+        self.user_list_widget.setUpdatesEnabled(True)
 
     def sort_panels(self, panels):
         sort_type = self.sort_combo.currentText()
@@ -269,9 +351,22 @@ class MainWindow(QMainWindow):
             return panels
 
     def change_sort_order(self, order):
+        if order == self.default_sort_order:
+            return
+        
         self.default_sort_order = order
         self.save_settings()
-        self.load_users()
+        
+        # パネルの再ソートのみを実行（完全な再読み込みを避ける）
+        panels = []
+        for i in range(self.user_list_layout.count()):
+            panel = self.user_list_layout.takeAt(0).widget()
+            if panel:
+                panels.append(panel)
+        
+        sorted_panels = self.sort_panels(panels)
+        for panel in sorted_panels:
+            self.user_list_layout.addWidget(panel)
 
     def _merge_user_data(self, user: Dict, details: Dict) -> Dict:
         # ユーザーの基本情報
@@ -285,7 +380,6 @@ class MainWindow(QMainWindow):
             'last_title': '',
             'game_name': ''
         }
-
         if details is None:
             return user_data
 
@@ -296,14 +390,13 @@ class MainWindow(QMainWindow):
                 'stream_title': details['stream']['title'],
                 'game_name': details['stream']['game_name']
             })
-        # 過去の配信がある場合
+        # 過去の配信がある場合のみ
         elif details.get('latest_video'):
             user_data.update({
                 'last_title': details['latest_video']['title'],
                 'game_name': details['latest_video']['game_name'],
                 'last_stream': details['latest_video']['created_at']
             })
-
         return user_data
 
     def show_user_register(self):
@@ -312,14 +405,43 @@ class MainWindow(QMainWindow):
             self.load_users()  # ユーザリストを更新
 
     def update_status(self):
-        self.load_users()  # ステータスを更新
+        # 更新が必要なユーザーのみを更新
+        for i in range(self.user_list_layout.count()):
+            panel = self.user_list_layout.itemAt(i).widget()
+            if panel:
+                try:
+                    details = self.api.get_user_details(panel.user_data['id'])
+                    if self._has_status_changed(panel.user_data, details):
+                        new_data = self._merge_user_data(panel.user_data, details)
+                        panel.user_data = new_data
+                        panel.setup_ui()
+                except Exception as e:
+                    print(f"Error updating user {panel.user_data['id']}: {str(e)}")
+
+    def _has_status_changed(self, old_data, new_details):
+        if new_details is None:
+            return False
+        if new_details.get('stream'):
+            return (not old_data['is_live'] or 
+                   old_data['stream_title'] != new_details['stream']['title'])
+        else:
+            return old_data['is_live']
 
     def delete_user(self, user_id: str):
         if self.db.remove_user(user_id):
             self.load_users()
-
+            
     def toggle_ordering_mode(self):
         self.is_ordering_mode = self.order_mode_button.isChecked()
+        
+        # パネルのドラッグ可能状態を更新
+        for i in range(self.user_list_layout.count()):
+            panel = self.user_list_layout.itemAt(i).widget()
+            if panel:
+                panel.setProperty("draggable", self.is_ordering_mode)
+                panel.style().unpolish(panel)
+                panel.style().polish(panel)
+        
         if self.is_ordering_mode:
             self.sort_combo.setEnabled(False)
             self.previous_sort = self.sort_combo.currentText()
@@ -338,7 +460,6 @@ class MainWindow(QMainWindow):
         target_idx = self.user_order.index(target_id)
         self.user_order[source_idx], self.user_order[target_idx] = \
             self.user_order[target_idx], self.user_order[source_idx]
-        
         self.load_users()
 
     def load_hidden_users(self):
