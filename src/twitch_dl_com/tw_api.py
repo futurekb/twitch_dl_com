@@ -1,8 +1,12 @@
 from typing import List, Dict, Optional
 import requests
 import json
+import time
 from .tw_auth import TwitchAuth
 from .database.db_manager import DatabaseManager
+from .exceptions import APIError, NetworkError, UserNotFoundError, VideoNotFoundError
+from .constants import REQUEST_TIMEOUT, MAX_RETRY_COUNT, RETRY_DELAY
+from .logger import logger
 
 class TwitchAPI:
     def __init__(self):
@@ -12,7 +16,8 @@ class TwitchAPI:
         self.load_registered_users()
         self.db = DatabaseManager()
 
-    def _get_headers(self):
+    def _get_headers(self) -> Dict[str, str]:
+        """APIリクエスト用のヘッダーを取得"""
         return {
             'Authorization': f'Bearer {self.auth.get_oauth_token()}',
             'Client-Id': self.client_id
@@ -85,26 +90,20 @@ class TwitchAPI:
         else:
             params = {'login': login_names}
         
-        response = requests.get(
+        return self._make_request(
+            'GET',
             f"{self.base_url}/users",
-            headers=self._get_headers(),
             params=params
-        )
-        if response.status_code == 200:
-            return response.json()['data']
-        return []  # エラー時は空リストを返す
+        ).get('data', [])
 
     def get_streams(self, user_ids: List[str]) -> List[Dict]:
         """配信状態を取得"""
         params = {'user_id': user_ids}
-        response = requests.get(
+        return self._make_request(
+            'GET',
             f"{self.base_url}/streams",
-            headers=self._get_headers(),
             params=params
-        )
-        if response.status_code == 200:
-            return response.json()['data']
-        raise Exception(f"Failed to get streams: {response.status_code}")
+        ).get('data', [])
 
     def get_game(self, game_id: str) -> Optional[Dict]:
         """ゲーム情報を取得"""
@@ -112,15 +111,16 @@ class TwitchAPI:
             return None
         
         params = {'id': [game_id]}
-        response = requests.get(
-            f"{self.base_url}/games",
-            headers=self._get_headers(),
-            params=params
-        )
-        if response.status_code == 200:
-            data = response.json()['data']
+        try:
+            data = self._make_request(
+                'GET',
+                f"{self.base_url}/games",
+                params=params
+            ).get('data', [])
             return data[0] if data else None
-        return None
+        except Exception as e:
+            logger.warning(f"ゲーム情報の取得に失敗: {e}")
+            return None
 
     def get_videos(self, user_id: str, first: int = 20) -> List[Dict]:
         """過去の配信動画を取得"""
@@ -129,32 +129,30 @@ class TwitchAPI:
             'first': first,
             'type': 'archive'
         }
-        response = requests.get(
+        
+        videos = self._make_request(
+            'GET',
             f"{self.base_url}/videos",
-            headers=self._get_headers(),
             params=params
-        )
-        if response.status_code == 200:
-            videos = response.json()['data']
-            # 各動画にゲーム名を追加
-            for video in videos:
-                game = self.get_game(video.get('game_id'))
-                video['game_name'] = game['name'] if game else ''
-            return videos
-        raise Exception(f"Failed to get videos: {response.status_code}")
+        ).get('data', [])
+        
+        # 各動画にゲーム名を追加
+        for video in videos:
+            game = self.get_game(video.get('game_id'))
+            video['game_name'] = game['name'] if game else ''
+        
+        return videos
 
-    def search_channels(self, query: str) -> list:
-        url = 'https://api.twitch.tv/helix/search/channels'
+    def search_channels(self, query: str) -> List[Dict]:
+        """チャンネルを検索"""
         params = {'query': query, 'first': 10}
         
-        response = requests.get(
-            url,
-            params=params,
-            headers=self._get_headers()
+        data = self._make_request(
+            'GET',
+            f"{self.base_url}/search/channels",
+            params=params
         )
-        response.raise_for_status()
         
-        data = response.json()
         return [{
             'id': item['id'],
             'login': item['broadcaster_login'],
@@ -233,13 +231,59 @@ class TwitchAPI:
         except Exception as e:
             raise Exception(f"コメントのダウンロードに失敗しました: {str(e)}")
 
-    def get_users_details(self, user_ids: list) -> dict:
+    def get_users_details(self, user_ids: List[str]) -> Dict[str, Optional[Dict]]:
         """複数のユーザー情報を一括で取得"""
         result = {}
         for user_id in user_ids:
             try:
                 result[user_id] = self.get_user_details(user_id)
             except Exception as e:
-                print(f"Error getting details for user {user_id}: {e}")
+                logger.error(f"ユーザー{user_id}の詳細情報取得エラー: {e}")
                 result[user_id] = None
         return result
+    
+    def _make_request(self, method: str, url: str, params: Dict = None, 
+                     json_data: Dict = None) -> Dict:
+        """リトライロジック付きのAPIリクエストを実行"""
+        for attempt in range(MAX_RETRY_COUNT):
+            try:
+                response = requests.request(
+                    method,
+                    url,
+                    headers=self._get_headers(),
+                    params=params,
+                    json=json_data,
+                    timeout=REQUEST_TIMEOUT
+                )
+                
+                if response.status_code == 404:
+                    raise APIError("Resource not found", status_code=404)
+                
+                response.raise_for_status()
+                return response.json()
+                
+            except requests.exceptions.Timeout:
+                logger.warning(f"タイムアウト (試行 {attempt + 1}/{MAX_RETRY_COUNT}): {url}")
+                if attempt < MAX_RETRY_COUNT - 1:
+                    time.sleep(RETRY_DELAY)
+                else:
+                    raise NetworkError(f"APIリクエストがタイムアウトしました: {url}", retry_count=MAX_RETRY_COUNT)
+                    
+            except requests.exceptions.HTTPError as e:
+                if e.response.status_code == 401:
+                    logger.info("認証トークンを再取得します")
+                    self.auth._cached_token = None  # トークンキャッシュをクリア
+                    if attempt < MAX_RETRY_COUNT - 1:
+                        time.sleep(RETRY_DELAY)
+                        continue
+                
+                error_message = f"APIエラー: {e.response.status_code} - {e.response.text}"
+                logger.error(error_message)
+                raise APIError(error_message, status_code=e.response.status_code)
+                
+            except requests.exceptions.RequestException as e:
+                logger.warning(f"APIリクエストエラー (試行 {attempt + 1}/{MAX_RETRY_COUNT}): {str(e)}")
+                if attempt < MAX_RETRY_COUNT - 1:
+                    time.sleep(RETRY_DELAY)
+                else:
+                    raise NetworkError(f"APIリクエストに失敗しました: {str(e)}", retry_count=MAX_RETRY_COUNT)

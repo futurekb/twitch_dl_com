@@ -3,8 +3,13 @@ import requests
 import os
 import time
 from datetime import datetime, timedelta
+from typing import Tuple, Optional
+from .exceptions import AuthenticationError, ConfigurationError, NetworkError
+from .constants import REQUEST_TIMEOUT, MAX_RETRY_COUNT, RETRY_DELAY
+from .logger import logger
 
 class TwitchAuth:
+    """Twitch API認証を管理するクラス"""
     def __init__(self, cache_file='config/token_cache.json'):
         self.cache_file = cache_file
         self.settings_file = 'config/settings.json'
@@ -27,19 +32,26 @@ class TwitchAuth:
             with open(self.settings_file, 'w', encoding='utf-8') as f:
                 json.dump(default_settings, f, indent=2, ensure_ascii=False)
 
-    def _check_and_initialize_settings(self):
-        with open(self.settings_file, 'r', encoding='utf-8') as f:
-            settings = json.load(f)
-            if not settings.get('twitch', {}).get('client_id') or not settings.get('twitch', {}).get('client_secret'):
-                raise ValueError(
-                    f"Twitchの認証情報が設定されていません。\n"
-                    f"以下の手順で設定してください：\n"
-                    f"1. https://dev.twitch.tv/console にアクセス\n"
-                    f"2. アプリケーションを作成\n"
-                    f"3. 取得したClient IDとClient Secretを{self.settings_file}に設定\n"
-                )
+    def _check_and_initialize_settings(self) -> None:
+        """設定ファイルをチェックし、必要な認証情報があるか確認"""
+        try:
+            with open(self.settings_file, 'r', encoding='utf-8') as f:
+                settings = json.load(f)
+                if not settings.get('twitch', {}).get('client_id') or not settings.get('twitch', {}).get('client_secret'):
+                    raise ConfigurationError(
+                        f"Twitchの認証情報が設定されていません。\n"
+                        f"以下の手順で設定してください：\n"
+                        f"1. https://dev.twitch.tv/console にアクセス\n"
+                        f"2. アプリケーションを作成\n"
+                        f"3. 取得したClient IDとClient Secretを{self.settings_file}に設定\n"
+                    )
+        except FileNotFoundError:
+            raise ConfigurationError(f"設定ファイルが見つかりません: {self.settings_file}")
+        except json.JSONDecodeError:
+            raise ConfigurationError(f"設定ファイルの形式が不正です: {self.settings_file}")
 
-    def _load_credentials(self):
+    def _load_credentials(self) -> Tuple[str, str]:
+        """認証情報を読み込む"""
         try:
             with open(self.settings_file, 'r', encoding='utf-8') as f:
                 settings = json.load(f)
@@ -48,13 +60,16 @@ class TwitchAuth:
                 client_secret = twitch_settings.get('client_secret')
                 
                 if not client_id or not client_secret:
-                    raise ValueError("client_idまたはclient_secretが設定されていません")
+                    raise ConfigurationError("client_idまたはclient_secretが設定されていません")
                     
                 return client_id, client_secret
         except json.JSONDecodeError:
-            raise Exception(f"設定ファイル {self.settings_file} の形式が不正です")
+            raise ConfigurationError(f"設定ファイル {self.settings_file} の形式が不正です")
+        except FileNotFoundError:
+            raise ConfigurationError(f"設定ファイルが見つかりません: {self.settings_file}")
         except Exception as e:
-            raise Exception(f"設定ファイルの読み込みに失敗しました: {str(e)}")
+            logger.error(f"設定ファイルの読み込みエラー: {e}")
+            raise ConfigurationError(f"設定ファイルの読み込みに失敗しました: {str(e)}")
 
     def _load_cached_token(self):
         if os.path.exists(self.cache_file):
@@ -84,9 +99,13 @@ class TwitchAuth:
         return time.time() < expiration_time and 'access_token' in self._cached_token
 
     def get_oauth_token(self) -> str:
+        """OAuthトークンを取得（キャッシュまたは新規取得）"""
         if self._validate_cached_token():
+            logger.debug("キャッシュされたトークンを使用")
             return self._cached_token['access_token']
 
+        logger.info("新しいOAuthトークンを取得")
+        
         data = {
             'client_id': self.client_id,
             'client_secret': self.client_secret,
@@ -98,36 +117,54 @@ class TwitchAuth:
             'Client-ID': self.client_id
         }
         
-        try:
-            response = requests.post(
-                'https://id.twitch.tv/oauth2/token',
-                data=data,
-                headers=headers
-            )
-            response.raise_for_status()
-            
-            token_data = response.json()
-            self._cached_token = {
-                'access_token': token_data['access_token'],
-                'timestamp': time.time()
-            }
-            
-            # キャッシュを保存
-            os.makedirs(os.path.dirname(self.cache_file), exist_ok=True)
-            with open(self.cache_file, 'w') as f:
-                json.dump(self._cached_token, f)
-            
-            return self._cached_token['access_token']
-            
-        except requests.exceptions.RequestException as e:
-            error_message = f"Failed to get OAuth token: {str(e)}"
-            if response is not None:
-                error_message += f"\nStatus: {response.status_code}"
-                try:
-                    error_message += f"\nResponse: {response.json()}"
-                except ValueError:
-                    error_message += f"\nResponse: {response.text}"
-            raise Exception(error_message)
+        # リトライロジック
+        for attempt in range(MAX_RETRY_COUNT):
+            try:
+                response = requests.post(
+                    'https://id.twitch.tv/oauth2/token',
+                    data=data,
+                    headers=headers,
+                    timeout=REQUEST_TIMEOUT
+                )
+                response.raise_for_status()
+                
+                token_data = response.json()
+                self._cached_token = {
+                    'access_token': token_data['access_token'],
+                    'timestamp': time.time()
+                }
+                
+                # キャッシュを保存
+                os.makedirs(os.path.dirname(self.cache_file), exist_ok=True)
+                with open(self.cache_file, 'w') as f:
+                    json.dump(self._cached_token, f)
+                
+                logger.info("OAuthトークンの取得に成功")
+                return self._cached_token['access_token']
+                
+            except requests.exceptions.Timeout:
+                logger.warning(f"タイムアウト (試行 {attempt + 1}/{MAX_RETRY_COUNT})")
+                if attempt < MAX_RETRY_COUNT - 1:
+                    time.sleep(RETRY_DELAY)
+                else:
+                    raise NetworkError("認証サーバーへの接続がタイムアウトしました", retry_count=MAX_RETRY_COUNT)
+                    
+            except requests.exceptions.RequestException as e:
+                error_message = f"OAuthトークンの取得に失敗: {str(e)}"
+                if hasattr(e, 'response') and e.response is not None:
+                    error_message += f"\nStatus: {e.response.status_code}"
+                    try:
+                        error_message += f"\nResponse: {e.response.json()}"
+                    except ValueError:
+                        error_message += f"\nResponse: {e.response.text}"
+                
+                logger.error(error_message)
+                
+                if attempt < MAX_RETRY_COUNT - 1:
+                    logger.info(f"リトライします... (試行 {attempt + 1}/{MAX_RETRY_COUNT})")
+                    time.sleep(RETRY_DELAY)
+                else:
+                    raise AuthenticationError(error_message)
 
 if __name__ == '__main__':
     try:
