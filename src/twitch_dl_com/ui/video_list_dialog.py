@@ -178,7 +178,7 @@ class VideoListDialog(QDialog):
             self.table.setCellWidget(i, 4, url_button)
             
             # コメントDLボタン test
-            dl_button = QPushButton("コメントDL")
+            dl_button = QPushButton("コメントDLする")
             end_time = datetime.fromisoformat(video['created_at'].replace('Z', '+00:00')) + self._parse_duration(video['duration'])
             is_live = datetime.now(timezone.utc) < end_time.replace(tzinfo=timezone.utc)
             
