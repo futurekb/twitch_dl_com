@@ -1,12 +1,14 @@
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QTableWidget, QTableWidgetItem,
                            QPushButton, QHeaderView, QProgressDialog, QMessageBox)
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QObject
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QObject, QSettings
 from datetime import datetime, timezone, timedelta
 import pyperclip
 import subprocess
 import asyncio
 import json
 import os
+import csv
+from concurrent.futures import ThreadPoolExecutor
 from ..tw_api import TwitchAPI
 
 class CommentDownloadThread(QThread):
@@ -61,6 +63,14 @@ class VideoListDialog(QDialog):
         # キャッシュディレクトリの作成
         os.makedirs(os.path.dirname(self.cache_file), exist_ok=True)
         
+        # コメントファイルの保存先ディレクトリを設定
+        self.comments_dir = os.path.join(
+            os.path.expanduser('~'),
+            '.twitch_dl_com',
+            'comments'
+        )
+        os.makedirs(self.comments_dir, exist_ok=True)
+        
         self.setWindowTitle("配信動画一覧")
         self.resize(800, 600)
         
@@ -103,6 +113,12 @@ class VideoListDialog(QDialog):
         layout.addWidget(self.table)
         
         self.load_videos()
+
+        # ウィンドウ位置の復元
+        settings = QSettings('TwitchDLCom', 'VideoList')
+        geometry = settings.value('geometry')
+        if geometry:
+            self.restoreGeometry(geometry)
         
     def load_videos(self):
         self.table.setSortingEnabled(False)
@@ -222,6 +238,46 @@ class VideoListDialog(QDialog):
 
     def _copy_url(self, url):
         pyperclip.copy(url)
+        QMessageBox.information(self, "完了", "URLをクリップボードにコピーしました")
+
+    async def process_comments_file(self, file_path, video_url, start_time, streamer_id):
+        try:
+            comments = []
+            start_datetime = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+
+            with open(file_path, 'r', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    # タイムスタンプの計算
+                    time_parts = list(map(int, row['time'].split(':')))
+                    seconds = time_parts[0] * 3600 + time_parts[1] * 60 + time_parts[2]
+                    comment_time = start_datetime + timedelta(seconds=seconds)
+
+                    # ユーザーIDの抽出
+                    user_name = row['user_name']
+                    user_id = user_name.split('(')[-1].rstrip(')')
+
+                    comments.append((
+                        video_url,
+                        streamer_id,
+                        user_id,
+                        row['user_color'],
+                        comment_time.isoformat(),
+                        row['message']
+                    ))
+
+            # コメントの保存
+            with ThreadPoolExecutor() as executor:
+                await asyncio.get_event_loop().run_in_executor(
+                    executor,
+                    self.db.save_comments,
+                    video_url,
+                    streamer_id,
+                    comments
+                )
+
+        except Exception as e:
+            print(f"コメント処理エラー: {str(e)}")
 
     def _download_comments(self, video_url, button):
         try:
@@ -232,18 +288,22 @@ class VideoListDialog(QDialog):
                 'title': self.table.item(current_row, 0).text()
             }
             
-            # ボタンを緑色に変更
+            # 出力ファイルパスの設定
+            output_file = f"{video_info['login']}-{video_info['start_time']}.csv"
+            output_path = os.path.join(self.comments_dir, output_file)
+            
+            # 保存先ディレクトリの書き込み権限を確認
+            if not os.access(self.comments_dir, os.W_OK):
+                raise PermissionError(f"保存先ディレクトリ {self.comments_dir} への書き込み権限がありません")
+            
             button.setStyleSheet("background-color: #90EE90;")
             button.setEnabled(False)
             
-            script_path = '/home/mitarashi/projects/twitch_dl_com/twitch_chat_downloader.py'
-            output_format = f"{video_info['login']}-{video_info['start_time']}.csv"
-            
             process = subprocess.Popen([
                 'python', 
-                script_path, 
+                '/home/mitarashi/projects/twitch_dl_com/twitch_chat_downloader.py', 
                 f'--url={video_url}',
-                f'--output={output_format}'
+                f'--output={output_path}'
             ])
             
             # 監視スレッドの設定
@@ -251,16 +311,24 @@ class VideoListDialog(QDialog):
             monitor = DownloadMonitor(process)
             monitor.moveToThread(thread)
             
-            # シグナル接続
-            thread.started.connect(monitor.monitor)
+            monitor.finished.connect(
+                lambda: asyncio.run(self.process_comments_file(
+                    output_path,
+                    video_url,
+                    video_info['start_time'],
+                    self.user_details['user']['id']
+                ))
+            )
             monitor.finished.connect(lambda: self._on_download_complete(button, thread, monitor))
             
-            # スレッドの参照を保持
+            thread.started.connect(monitor.monitor)
             self.download_threads[button] = (thread, monitor)
-            
-            # スレッド開始
             thread.start()
             
+        except PermissionError as e:
+            button.setStyleSheet("")
+            button.setEnabled(True)
+            QMessageBox.critical(self, "エラー", str(e))
         except Exception as e:
             button.setStyleSheet("")
             button.setEnabled(True)
@@ -279,6 +347,10 @@ class VideoListDialog(QDialog):
 
     def closeEvent(self, event):
         """ウィンドウが閉じられる時の処理"""
+        # ウィンドウ位置の保存
+        settings = QSettings('TwitchDLCom', 'VideoList')
+        settings.setValue('geometry', self.saveGeometry())
+
         # 実行中のダウンロードをキャンセル
         for thread, monitor in self.download_threads.values():
             if monitor.process:

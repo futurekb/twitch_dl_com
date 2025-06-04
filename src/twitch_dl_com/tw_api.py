@@ -232,3 +232,14 @@ class TwitchAPI:
             
         except Exception as e:
             raise Exception(f"コメントのダウンロードに失敗しました: {str(e)}")
+
+    def get_users_details(self, user_ids: list) -> dict:
+        """複数のユーザー情報を一括で取得"""
+        result = {}
+        for user_id in user_ids:
+            try:
+                result[user_id] = self.get_user_details(user_id)
+            except Exception as e:
+                print(f"Error getting details for user {user_id}: {e}")
+                result[user_id] = None
+        return result

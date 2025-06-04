@@ -3,6 +3,7 @@ import time
 import os
 import re
 import sys
+import json
 from PyQt6.QtWidgets import QApplication
 from twitch_dl_com.ui.main_window import MainWindow
 
@@ -74,6 +75,9 @@ def download_twitch_chat_csv(video_url, output_path="chat.csv"):
         raise Exception("CSVのダウンロードに失敗しました")
 
 def main():
+    # Force Qt to use X11 instead of Wayland
+    os.environ["QT_QPA_PLATFORM"] = "xcb"
+    
     app = QApplication(sys.argv)
     window = MainWindow()
     window.show()
