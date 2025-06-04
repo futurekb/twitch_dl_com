@@ -27,6 +27,7 @@ pip install -r requirements.txt
 ### クリップのダウンロード
 
 ```bash
+source ~/venv/twitch/bin/activate
 python twitch_dl.py clip <clip_url>
 ```
 

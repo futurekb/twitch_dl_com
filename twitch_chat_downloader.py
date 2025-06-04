@@ -74,39 +74,6 @@ def open_folder(path):
         return False
     return True
 
-# def copy_to_windows(src_path):
-#     """Linuxの仮想環境からWindowsのローカル環境にファイルをコピーする関数"""
-#     try:
-#         # Windowsのダウンロードフォルダのパス
-#         windows_path = "/mnt/c/Users/futur/Downloads/TwitchComment"
-        
-#         # Windowsのフォルダを作成
-#         os.makedirs(windows_path, exist_ok=True)
-        
-#         # ファイルをコピー
-#         for file in glob.glob(os.path.join(src_path, "*.csv")):
-#             filename = os.path.basename(file)
-#             # コロン(:)をアンダースコア(_)に置換
-#             safe_filename = filename.replace(":", "_")
-#             dst_file = os.path.join(windows_path, safe_filename)
-            
-#             try:
-#                 # ファイルの存在確認
-#                 if os.path.exists(file):
-#                     subprocess.run(['cp', '-f', file, dst_file], check=True)
-#                     print(f"ファイルをコピーしました: {dst_file}")
-#                 else:
-#                     print(f"元ファイルが見つかりません: {file}")
-#                     continue
-#             except subprocess.CalledProcessError as e:
-#                 print(f"ファイルコピー中にエラーが発生: {e}")
-#                 continue
-        
-#         return windows_path
-#     except Exception as e:
-#         print(f"Windowsへのコピーに失敗しました: {e}")
-#         return None
-
 def copy_to_windows(src_path):
     """Linuxの仮想環境からWindowsのローカル環境にファイルをコピーする関数"""
     try:
@@ -119,7 +86,9 @@ def copy_to_windows(src_path):
         # ファイルをコピー
         for file in glob.glob(os.path.join(src_path, "*.csv")):
             filename = os.path.basename(file)
-            dst_file = os.path.join(windows_path, filename)
+            # ファイル名をサニタイズ
+            safe_filename = sanitize_filename(filename)
+            dst_file = os.path.join(windows_path, safe_filename)
             subprocess.run(['cp', file, dst_file], check=True)
             print(f"ファイルをコピーしました: {dst_file}")
         
@@ -131,9 +100,7 @@ def copy_to_windows(src_path):
 def sanitize_filename(filename):
     """ファイル名から不正な文字を除去"""
     # Windowsで使用できない文字を置換
-    filename = re.sub(r'[<>"/\\|?*]', '_', filename)
-    # コロン(:)を別途処理
-    filename = filename.replace(':', '_')
+    filename = re.sub(r'[<>"/\\|?*:]', '_', filename)  # コロンも含めて置換
     # 文字数制限（255文字以内）
     if len(filename) > 255:
         base, ext = os.path.splitext(filename)
@@ -290,6 +257,16 @@ def main(video_url, output_filename=None):
                 
                 if newest_file and os.path.getsize(newest_file) > 0:
                     print(f"ダウンロード完了: {newest_file}")
+                    
+                    # ダウンロードされたファイルの名前をサニタイズ
+                    safe_basename = sanitize_filename(os.path.basename(newest_file))
+                    safe_path = os.path.join(os.path.dirname(newest_file), safe_basename)
+                    
+                    if safe_path != newest_file:
+                        os.rename(newest_file, safe_path)
+                        newest_file = safe_path
+                        print(f"ファイル名をサニタイズしました: {safe_path}")
+                    
                     if output_filename:
                         renamed_file = rename_chat_file(download_path, output_filename)
                         if renamed_file:
