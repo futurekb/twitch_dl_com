@@ -177,7 +177,7 @@ class VideoListDialog(QDialog):
                 url_button.setToolTip("この動画は現在利用できません")
             self.table.setCellWidget(i, 4, url_button)
             
-            # コメントDLボタン
+            # コメントDLボタン test
             dl_button = QPushButton("コメントDL")
             end_time = datetime.fromisoformat(video['created_at'].replace('Z', '+00:00')) + self._parse_duration(video['duration'])
             is_live = datetime.now(timezone.utc) < end_time.replace(tzinfo=timezone.utc)
