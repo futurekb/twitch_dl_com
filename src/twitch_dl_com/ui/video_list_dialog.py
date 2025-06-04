@@ -170,7 +170,7 @@ class VideoListDialog(QDialog):
             self.table.setItem(i, 3, QTableWidgetItem(self._format_datetime(end_time.isoformat())))
             
             # URLコピーボタン
-            url_button = QPushButton("URLコピー")
+            url_button = QPushButton("URLコピーする")
             url_button.clicked.connect(lambda checked, url=video['url']: self._copy_url(url))
             if not is_available:
                 url_button.setEnabled(False)
