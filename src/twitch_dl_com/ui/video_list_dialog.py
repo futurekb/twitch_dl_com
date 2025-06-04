@@ -80,7 +80,7 @@ class VideoListDialog(QDialog):
         self.table = QTableWidget()
         self.table.setColumnCount(6)  # カテゴリ列を削除
         self.table.setHorizontalHeaderLabels([
-            "配信タイトル", "配信時間", "開始時間", "終了時間", "URLコピー", "コメント"
+            "配信タイトル", "配信時間", "開始時間", "終了時間", "URLコピー", "コメントDL"
         ])
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         
