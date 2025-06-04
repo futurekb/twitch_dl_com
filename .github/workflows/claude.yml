@@ -9,6 +9,12 @@ on:
   pull_request_review:
     types: [submitted]
 
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+  repository-projects: read
+
 jobs:
   claude-response:
     runs-on: ubuntu-latest
